@@ -143,7 +143,7 @@ archivo = st.file_uploader("Arrastra tu archivo aquí", type=["xlsx"])
 
 if archivo:
     if st.button("🚀 Procesar Archivo"):
-        with st.spinner("Trabajando en la nómina..."):
+        with st.spinner("Trabajando en el archivo..."):
             resultado, error = procesar_excel(archivo)
             
             if error:
@@ -153,8 +153,9 @@ if archivo:
                 st.download_button(
                     label="📥 Descargar Reporte Final",
                     data=resultado,
-                    file_name="Reporte_Nomina_Listo.xlsx",
+                    file_name="Reporte_Listo.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
                 )
+
 
