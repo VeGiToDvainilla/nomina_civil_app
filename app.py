@@ -7,7 +7,7 @@ import io
 
 # --- TÍTULO Y DESCRIPCIÓN ---
 st.set_page_config(page_title="Separador de Actividades", page_icon="🏗️")
-st.title("🏗️ Herramienta: Separador de actividades por fila")
+st.title("Herramienta: Separador de actividades por fila")
 st.write("""
 **Instrucciones:**
 1. Sube tu archivo de Excel (`.xlsx`).
@@ -173,3 +173,4 @@ if 'resultado_listo' in st.session_state:
         file_name="Reporte_Desglosado_Listo.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
