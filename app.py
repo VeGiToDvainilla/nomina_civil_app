@@ -6,8 +6,8 @@ from openpyxl.utils import get_column_letter
 import io
 
 # --- TÍTULO Y DESCRIPCIÓN ---
-st.set_page_config(page_title="Reparador de Nómina", page_icon="🏗️")
-st.title("🏗️ Herramienta de Nómina - Ing. Civil")
+st.set_page_config(page_title="separador", page_icon="🏗️")
+st.title("🏗️ Herramienta-separador de actividades por fila")
 st.write("""
 **Instrucciones:**
 1. Sube tu archivo de Excel (`.xlsx`).
@@ -155,4 +155,5 @@ if archivo:
                     data=resultado,
                     file_name="Reporte_Nomina_Listo.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
                 )
