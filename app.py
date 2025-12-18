@@ -8,7 +8,7 @@ from openpyxl.utils import get_column_letter
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Procesador Nómina Pro", page_icon="🏗️")
-st.title("🏗️ Procesador de Nómina (Optimizado)")
+st.title("Herramienta seprador de actividades")
 
 # --- FUNCIÓN DE LIMPIEZA DE MEMORIA ---
 def limpiar_memoria():
@@ -202,3 +202,4 @@ if archivo:
                     file_name="Reporte_Final.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
+
