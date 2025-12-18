@@ -10,7 +10,7 @@ from openpyxl.utils import get_column_letter
 st.set_page_config(page_title="Separador de Actividades", page_icon="🏗️", layout="wide")
 
 # --- 2. TÍTULO E INSTRUCCIONES ---
-st.title("🏗️ Separador de Actividades de Obra")
+st.title(" Separador de Actividades de Obra")
 
 st.info("""
 **📋 INSTRUCCIONES DE USO:**
@@ -201,3 +201,4 @@ if archivo:
                     file_name="Reporte_Desglosado.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
+
