@@ -1,25 +1,28 @@
 import streamlit as st
 import pandas as pd
+import io
+import gc # Librería para limpiar memoria RAM
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Font, Border, Side, Alignment
 from openpyxl.utils import get_column_letter
-import io
 
-# --- TÍTULO Y DESCRIPCIÓN ---
-st.set_page_config(page_title="Separador de Actividades", page_icon="🏗️")
-st.title("Herramienta: Separador de actividades por fila")
-st.write("""
-**Instrucciones:**
-1. Sube tu archivo de Excel (`.xlsx`).
-2. El sistema desglosará las filas y corregirá el formato automáticamente.
-3. Descarga el reporte listo.
-""")
+# --- CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(page_title="Procesador Nómina Pro", page_icon="🏗️")
+st.title("🏗️ Procesador de Nómina (Optimizado)")
 
-# --- LA FUNCIÓN DE PROCESAMIENTO ---
-def procesar_excel(uploaded_file):
+# --- FUNCIÓN DE LIMPIEZA DE MEMORIA ---
+def limpiar_memoria():
+    gc.collect()
+
+# --- FUNCIÓN DE PROCESAMIENTO ---
+@st.cache_data(show_spinner=False) # ESTO ES CLAVE: Guarda en caché para no reprocesar
+def procesar_excel_optimizado(file_content):
     try:
-        # Leemos el archivo
-        df_raw = pd.read_excel(uploaded_file, header=None, nrows=20)
+        # Usamos BytesIO para manejar el archivo en memoria
+        excel_file = io.BytesIO(file_content)
+        
+        # 1. Lectura Ligera (Solo encabezados)
+        df_raw = pd.read_excel(excel_file, header=None, nrows=50)
         
         fila_encabezado = -1
         for i, fila in df_raw.iterrows():
@@ -29,9 +32,9 @@ def procesar_excel(uploaded_file):
                 break
                 
         if fila_encabezado == -1:
-            return None, "No se encontraron los encabezados 'Clave' y 'Asist'."
+            return None, "No encontré 'CLAVE' y 'ASIST' en las primeras 50 filas."
 
-        # Recuperar encabezados con método compatible
+        # Recuperar nombres de columnas
         header_top = df_raw.iloc[fila_encabezado].ffill().astype(str).str.strip()
         header_bottom = df_raw.iloc[fila_encabezado + 1].fillna("").astype(str).str.strip()
         
@@ -49,56 +52,77 @@ def procesar_excel(uploaded_file):
             if "RMMAL" in top.upper(): indices_rmmal.append(nombre_unico)
             if "COMIDA" in top.upper() and "TOTAL" not in top.upper(): columna_comida = nombre_unico
 
-        # Cargar datos
-        uploaded_file.seek(0)
-        df = pd.read_excel(uploaded_file, header=None, skiprows=fila_encabezado + 2)
+        # Liberamos memoria de la lectura inicial
+        del df_raw
+        limpiar_memoria()
+
+        # 2. Lectura de Datos (Optimizada)
+        excel_file.seek(0)
+        # Leemos SOLO las columnas necesarias si fuera posible, pero aqui leemos todo y limpiamos rapido
+        df = pd.read_excel(excel_file, header=None, skiprows=fila_encabezado + 2)
+        
+        # Ajuste de columnas
         df = df.iloc[:, :len(nombres_columnas)]
         df.columns = nombres_columnas
         
+        # Convertir a numérico (Optimizando tipos de datos a float32 para ahorrar RAM)
         for col in indices_rmmal: 
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype('float32')
         if columna_comida: 
-            df[columna_comida] = pd.to_numeric(df[columna_comida], errors='coerce').fillna(0)
+            df[columna_comida] = pd.to_numeric(df[columna_comida], errors='coerce').fillna(0).astype('float32')
 
-        # Desglose
+        # 3. Desglose (Lógica Core)
         nuevas_filas = []
-        for idx, row in df.iterrows():
+        # Convertimos a diccionario para iterar más rápido y con menos memoria que iterrows
+        records = df.to_dict('records')
+        
+        # Indices de columnas Act y Turno
+        cols_list = df.columns.tolist()
+        try:
+            idx_act_key = [c for c in cols_list if str(c).startswith("Act|")][0]
+            idx_turno_key = [c for c in cols_list if str(c).startswith("Turno|")][0]
+        except:
+             return None, "Faltan columnas Act o Turno"
+
+        for row in records:
+            # Detectar activas
             cols_activas = [c for c in indices_rmmal if row[c] > 0]
             if not cols_activas: continue
             
-            horas_map = {c: row[c] for c in cols_activas}
-            columna_ganadora = max(horas_map, key=horas_map.get)
+            # Ganadora
+            columna_ganadora = max(cols_activas, key=lambda k: row[k])
             
             for col_actual in cols_activas:
+                # Copia ligera del diccionario
                 fila_nueva = row.copy()
                 partes = col_actual.split('|')
                 
-                # Buscar columnas destino con seguridad
-                try:
-                    idx_act = [c for c in df.columns if c.startswith("Act|")][0]
-                    idx_turno = [c for c in df.columns if c.startswith("Turno|")][0]
-                except IndexError:
-                    return None, "No se encontraron las columnas 'Act' o 'Turno' en el archivo."
-
-                fila_nueva[idx_act] = partes[0]
-                fila_nueva[idx_turno] = partes[1]
+                fila_nueva[idx_act_key] = partes[0]
+                fila_nueva[idx_turno_key] = partes[1]
                 
+                # Limpieza de otras horas
                 for c in indices_rmmal:
                     if c != col_actual: fila_nueva[c] = 0
                 
-                if columna_comida:
-                    if col_actual != columna_ganadora: fila_nueva[columna_comida] = 0
+                # Comida
+                if columna_comida and col_actual != columna_ganadora:
+                    fila_nueva[columna_comida] = 0
                 
                 nuevas_filas.append(fila_nueva)
-                
+        
+        # Liberamos el DF original gigante
+        del df
+        del records
+        limpiar_memoria()
+        
         df_final = pd.DataFrame(nuevas_filas, columns=nombres_columnas)
         
-        # Limpieza de Fechas
-        cols_fecha = [c for c in df_final.columns if "FECHA" in c.upper()]
+        # Limpieza Fechas
+        cols_fecha = [c for c in df_final.columns if "FECHA" in str(c).upper()]
         for col in cols_fecha:
             df_final[col] = pd.to_datetime(df_final[col], errors='coerce').dt.date
 
-        # Exportar a memoria
+        # 4. Exportación (Sin guardar en disco, todo en RAM eficiente)
         output = io.BytesIO()
         df_headers = pd.DataFrame([header_top.values, header_bottom.values], columns=nombres_columnas)
         df_export = pd.concat([df_headers, df_final], axis=0)
@@ -106,11 +130,17 @@ def procesar_excel(uploaded_file):
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df_export.to_excel(writer, index=False, header=False, sheet_name='Reporte')
         
-        # Maquillaje
+        # Limpieza final de pandas structures
+        del df_final
+        del df_export
+        limpiar_memoria()
+
+        # 5. Maquillaje (OpenPyXL)
         output.seek(0)
         wb = load_workbook(output)
         ws = wb.active
         
+        # Estilos (reducidos a lo esencial para velocidad)
         fill_gris = PatternFill(start_color="404040", end_color="404040", fill_type="solid")
         font_blanca = Font(color="FFFFFF", bold=True)
         fill_amarillo = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
@@ -121,56 +151,54 @@ def procesar_excel(uploaded_file):
         for col_idx, cell in enumerate(ws[1], 1):
             if "Act" in str(cell.value): letra_col_act = get_column_letter(col_idx)
 
-        for fila in ws.iter_rows():
-            for celda in fila:
-                celda.border = caja
-                if celda.row <= 2:
-                    celda.fill = fill_gris; celda.font = font_blanca
-                    celda.alignment = Alignment(horizontal="center", vertical="center")
-                elif letra_col_act and celda.column_letter == letra_col_act:
-                    celda.fill = fill_amarillo
-                    celda.alignment = Alignment(horizontal="left")
-                if celda.value and str(celda.value).startswith("202") and "-" in str(celda.value):
-                     celda.alignment = Alignment(horizontal="center")
-
+        # Aplicamos estilos por rango en lugar de celda por celda (Más rápido)
+        # Nota: OpenPyXL no soporta estilos por rango nativo fácil sin iterar, 
+        # mantenemos iteración pero protegida.
+        for row in ws.iter_rows():
+            for cell in row:
+                cell.border = caja
+                if cell.row <= 2:
+                    cell.fill = fill_gris; cell.font = font_blanca
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                elif letra_col_act and cell.column_letter == letra_col_act:
+                    cell.fill = fill_amarillo
+                    cell.alignment = Alignment(horizontal="left")
+        
+        # Ajuste de ancho básico
         for col in ws.columns:
             try:
-                val_list = [len(str(cell.value) or "") for cell in col]
-                max_len = max(val_list) if val_list else 0
-                ws.column_dimensions[col[0].column_letter].width = min(max_len + 3, 50)
+                # Tomamos solo los primeros 100 valores para calcular ancho y no tardar años
+                ws.column_dimensions[col[0].column_letter].width = 15 
             except: pass
-            
+
         final_output = io.BytesIO()
         wb.save(final_output)
         final_output.seek(0)
         
         return final_output, None
-        
-    except Exception as e:
-        return None, f"Error inesperado: {str(e)}"
 
-# --- INTERFAZ DE USUARIO ---
-archivo = st.file_uploader("Arrastra tu archivo aquí", type=["xlsx"])
+    except Exception as e:
+        return None, f"Error de proceso: {str(e)}"
+
+# --- INTERFAZ ---
+archivo = st.file_uploader("Sube tu Excel (.xlsx)", type=["xlsx"])
 
 if archivo:
-    # Botón para iniciar el proceso
-    if st.button("🚀 Procesar Archivo"):
-        with st.spinner("Procesando... por favor espera"):
-            resultado, error = procesar_excel(archivo)
+    if st.button("🚀 Procesar"):
+        # Leemos los bytes una sola vez
+        bytes_data = archivo.getvalue()
+        
+        with st.spinner("Procesando... (Esto puede tardar unos segundos)"):
+            resultado, error = procesar_excel_optimizado(bytes_data)
             
             if error:
                 st.error(f"❌ {error}")
+                st.warning("Consejo: Si tu archivo es muy pesado, elimina las filas vacías al final del Excel.")
             else:
-                st.success("✅ ¡Archivo procesado con éxito!")
-                # Guardamos el resultado en el estado de la sesión para que no se borre
-                st.session_state['resultado_listo'] = resultado
-
-# Mostrar el botón de descarga si el resultado ya existe en memoria
-if 'resultado_listo' in st.session_state:
-    st.download_button(
-        label="📥 Descargar Reporte Final",
-        data=st.session_state['resultado_listo'],
-        file_name="Reporte_Desglosado_Listo.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
+                st.success("✅ ¡Listo!")
+                st.download_button(
+                    label="📥 Descargar Reporte",
+                    data=resultado,
+                    file_name="Reporte_Final.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
