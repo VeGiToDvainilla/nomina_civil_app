@@ -11,12 +11,26 @@ st.set_page_config(page_title="Separador de Actividades", page_icon="🏗️", l
 
 st.title("🏗️ Separador de Actividades (Orden Original)")
 
-st.info("""
-**📋 CARACTERÍSTICAS:**
-1.  **Orden Intacto:** El reporte mantiene el mismo orden de filas que tu archivo original.
-2.  **Comida por Turno:** Respeta 1 comida por turno (1er y 2do independientes).
-3.  **Alerta 12h:** Avisa si alguien suma más de 12 horas en un turno.
-""")
+# --- INICIO DEL BLOQUE DE INSTRUCCIONES ---
+with st.expander("📘 GUÍA DE USO (Haz clic aquí para leer)", expanded=False):
+    st.markdown("""
+    ### 📝 Pasos para procesar tu archivo:
+    
+    1.  **Prepara tu Excel:** Asegúrate de que tenga los encabezados **CLAVE** y **ASIST**.
+    2.  **Sube el archivo:** Arrastra tu documento abajo.
+    3.  **Procesar:** Haz clic en **🚀 PROCESAR DATOS**.
+    4.  **Revisión:**
+        * Si todo sale bien, verás globos 🎈.
+        * Si alguien tiene **más de 12 horas** en un turno, verás una **ALERTA ROJA** 🚨.
+    5.  **Descargar:** Obtén tu reporte limpio y ordenado.
+
+    ---
+    ### ⚙️ Funciones Clave:
+    * **Orden Intacto:** Respeta el orden original de tu Excel.
+    * **Comida por Turno:** Respeta 1 comida para el 1er Turno y 1 para el 2do.
+    * **Detector de Fatiga:** Avisa si un turno suma más de 12 horas.
+    """)
+# --- FIN DEL BLOQUE DE INSTRUCCIONES ---
 
 # --- 2. LÓGICA MAESTRA ---
 def procesar_excel_master(file_content):
@@ -240,3 +254,4 @@ if archivo:
                     file_name="Reporte_Ordenado.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
+
