@@ -9,12 +9,13 @@ from openpyxl.utils import get_column_letter
 # --- 1. CONFIGURACIÓN ---
 st.set_page_config(page_title="Separador de Actividades", page_icon="🏗️", layout="wide")
 
-st.title("Separador de Actividades (Con Alerta 12h)")
+st.title("🏗️ Separador de Actividades (Orden Original)")
 
 st.info("""
-**📋 NOVEDADES DE ESTA VERSIÓN:**
-1.  **Comida por Turno:** Se respeta 1 hora de comida para el 1er Turno y 1 hora para el 2do Turno.
-2.  **Detector de Excesos:** Si un turno suma más de **12 horas**, aparecerá una alerta roja con los nombres.
+**📋 CARACTERÍSTICAS:**
+1.  **Orden Intacto:** El reporte mantiene el mismo orden de filas que tu archivo original.
+2.  **Comida por Turno:** Respeta 1 comida por turno (1er y 2do independientes).
+3.  **Alerta 12h:** Avisa si alguien suma más de 12 horas en un turno.
 """)
 
 # --- 2. LÓGICA MAESTRA ---
@@ -92,11 +93,9 @@ def procesar_excel_master(file_content):
                 fila_nueva[col_act_key] = partes[0]
                 fila_nueva[col_turno_key] = partes[1]
                 
-                # Borrar horas de otras actividades
                 for c in indices_rmmal:
                     if c != col_actual: fila_nueva[c] = 0
                 
-                # Asignar comida solo a la ganadora de ESA fila
                 if columna_comida and col_actual != columna_ganadora:
                     fila_nueva[columna_comida] = 0
                 
@@ -107,23 +106,41 @@ def procesar_excel_master(file_content):
         
         df_final = pd.DataFrame(nuevas_filas, columns=nombres_columnas)
 
+        # --- TRUCO DE INGENIERÍA: MEMORIA FOTOGRÁFICA 📸 ---
+        # Guardamos el orden actual (que es el original del Excel) en una columna oculta
+        df_final['__orden_original__'] = range(len(df_final))
+
         # D) CANDADO FINAL (POR TURNO) 🔓🔒
-        # Ahora agrupamos por Nombre + Fecha + TURNO
         if columna_comida:
             c_nombre = next((c for c in df_final.columns if "NOMBRE" in c.upper()), None)
             c_fecha = next((c for c in df_final.columns if "FECHA" in c.upper()), None)
             
             if c_nombre and c_fecha:
-                # Ordenamos para priorizar la actividad con más horas
-                df_final['__temp__'] = df_final[indices_rmmal].sum(axis=1)
-                df_final = df_final.sort_values(by=[c_nombre, c_fecha, col_turno_key, '__temp__'], ascending=[True, True, True, False])
+                # 1. Calculamos horas para desempatar
+                df_final['__temp_horas__'] = df_final[indices_rmmal].sum(axis=1)
                 
-                # Detectar duplicados de (Nombre + Fecha + Turno)
-                # Esto permite que haya comida en Turno 1 y comida en Turno 2 sin borrarse entre sí
+                # 2. ORDENAMOS TEMPORALMENTE para aplicar la lógica (quedarnos con el de más horas)
+                #    Esto desordena el archivo visualmente, pero es necesario para la matemática
+                df_final = df_final.sort_values(
+                    by=[c_nombre, c_fecha, col_turno_key, '__temp_horas__'], 
+                    ascending=[True, True, True, False]
+                )
+                
+                # 3. Aplicamos el borrado de comidas duplicadas
                 mask_dup = df_final.duplicated(subset=[c_nombre, c_fecha, col_turno_key], keep='first')
                 df_final.loc[mask_dup, columna_comida] = 0
                 
-                df_final.drop(columns=['__temp__'], inplace=True)
+                # 4. RESTAURAMOS EL ORDEN ORIGINAL 🔄
+                #    Volvemos a ordenar por la columna oculta que creamos al principio
+                df_final = df_final.sort_values(by='__orden_original__', ascending=True)
+                
+                # Borramos las columnas auxiliares
+                df_final.drop(columns=['__temp_horas__', '__orden_original__'], inplace=True)
+            else:
+                # Si no hay nombre/fecha, solo borramos la columna auxiliar de orden
+                df_final.drop(columns=['__orden_original__'], inplace=True)
+        else:
+             df_final.drop(columns=['__orden_original__'], inplace=True)
 
         # E) LIMPIEZA DE FECHAS
         cols_fecha = [c for c in df_final.columns if "FECHA" in str(c).upper()]
@@ -133,17 +150,16 @@ def procesar_excel_master(file_content):
         # G) REPORTE DE EXCESO (> 12 HORAS) 👮‍♂️
         df_excedidos = pd.DataFrame()
         if c_nombre and c_fecha:
-            # Calculamos horas totales por fila (Actividad + Comida)
+            # Calculamos horas totales por fila para la alerta
             df_final['__total_fila__'] = df_final[indices_rmmal].sum(axis=1) + df_final[columna_comida]
             
-            # Agrupamos por Turno para ver el total real
+            # Agrupamos solo para checar (esto no afecta el orden del df_final)
             reporte = df_final.groupby([c_nombre, c_fecha, col_turno_key])['__total_fila__'].sum().reset_index()
             
-            # Filtramos los que pasen de 12
+            # Filtramos excesos
             df_excedidos = reporte[reporte['__total_fila__'] > 12.0].copy()
             df_excedidos.columns = ['Nombre', 'Fecha', 'Turno', 'Horas Totales']
             
-            # Limpiamos columna auxiliar
             df_final.drop(columns=['__total_fila__'], inplace=True)
 
         # F) EXPORTACIÓN
@@ -158,7 +174,7 @@ def procesar_excel_master(file_content):
         wb = load_workbook(output)
         ws = wb.active
         
-        # ESTILOS BÁSICOS
+        # ESTILOS
         fill_gris = PatternFill(start_color="404040", end_color="404040", fill_type="solid")
         font_blanca = Font(color="FFFFFF", bold=True)
         fill_amarillo = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
@@ -202,29 +218,25 @@ archivo = st.file_uploader("📂 Cargar Excel", type=["xlsx"])
 
 if archivo:
     if st.button("🚀 PROCESAR DATOS"):
-        with st.spinner("Trabajando..."):
+        with st.spinner("Procesando y manteniendo el orden original..."):
             bytes_data = archivo.getvalue()
-            # Ahora recibimos 3 cosas: el excel, la lista de excesos y el error
             excel_resultado, df_alertas, error_msg = procesar_excel_master(bytes_data)
             
             if error_msg:
                 st.error(error_msg)
             else:
-                st.success("✅ ¡Procesamiento completado!")
+                st.success("✅ ¡Listo! El archivo respeta el orden original.")
                 
-                # --- MOSTRAR ALERTAS DE HORAS ---
                 if df_alertas is not None and not df_alertas.empty:
-                    st.error(f"⚠️ ¡ATENCIÓN! Se detectaron {len(df_alertas)} casos con MÁS DE 12 HORAS por turno:")
+                    st.error(f"⚠️ SE DETECTARON {len(df_alertas)} CASOS DE EXCESO DE HORAS (>12h):")
                     st.dataframe(df_alertas, use_container_width=True)
-                    st.warning("El reporte Excel se generó, pero revisa estos casos.")
                 else:
                     st.balloons()
-                    st.info("✅ Todo limpio: Nadie excedió las 12 horas por turno.")
+                    st.info("✅ Ningún turno excedió las 12 horas.")
 
-                # Botón de descarga
                 st.download_button(
                     label="📥 Descargar Reporte Final",
                     data=excel_resultado,
-                    file_name="Reporte_Final.xlsx",
+                    file_name="Reporte_Ordenado.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
