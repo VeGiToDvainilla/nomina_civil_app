@@ -15,20 +15,21 @@ st.title("🏗️ Separador de Actividades (Orden Original)")
 with st.expander("📘 GUÍA DE USO (Haz clic aquí para leer)", expanded=False):
     st.markdown("""
     ### 📝 Pasos para procesar tu archivo:
-    
+     
     1.  **Prepara tu Excel:** Asegúrate de que tenga los encabezados **CLAVE** y **ASIST**.
     2.  **Sube el archivo:** Arrastra tu documento abajo.
     3.  **Procesar:** Haz clic en **🚀 PROCESAR DATOS**.
     4.  **Revisión:**
         * Si todo sale bien, verás globos 🎈.
-        * Si alguien tiene **más de 12 horas** en un turno, verás una **ALERTA ROJA** 🚨.
+        * **ALERTA ROJA 🚨:** * Lun-Vie: Si suma **más de 12 horas**.
+            * Sáb-Dom: Si suma **más de 6 horas**.
     5.  **Descargar:** Obtén tu reporte limpio y ordenado.
 
     ---
     ### ⚙️ Funciones Clave:
     * **Orden Intacto:** Respeta el orden original de tu Excel.
     * **Comida por Turno:** Respeta 1 comida para el 1er Turno y 1 para el 2do.
-    * **Detector de Fatiga:** Avisa si un turno suma más de 12 horas.
+    * **Detector de Fatiga Dinámico:** Ajusta el límite en fines de semana.
     """)
 # --- FIN DEL BLOQUE DE INSTRUCCIONES ---
 
@@ -121,7 +122,6 @@ def procesar_excel_master(file_content):
         df_final = pd.DataFrame(nuevas_filas, columns=nombres_columnas)
 
         # --- TRUCO DE INGENIERÍA: MEMORIA FOTOGRÁFICA 📸 ---
-        # Guardamos el orden actual (que es el original del Excel) en una columna oculta
         df_final['__orden_original__'] = range(len(df_final))
 
         # D) CANDADO FINAL (POR TURNO) 🔓🔒
@@ -133,25 +133,21 @@ def procesar_excel_master(file_content):
                 # 1. Calculamos horas para desempatar
                 df_final['__temp_horas__'] = df_final[indices_rmmal].sum(axis=1)
                 
-                # 2. ORDENAMOS TEMPORALMENTE para aplicar la lógica (quedarnos con el de más horas)
-                #    Esto desordena el archivo visualmente, pero es necesario para la matemática
+                # 2. ORDENAMOS TEMPORALMENTE
                 df_final = df_final.sort_values(
                     by=[c_nombre, c_fecha, col_turno_key, '__temp_horas__'], 
                     ascending=[True, True, True, False]
                 )
                 
-                # 3. Aplicamos el borrado de comidas duplicadas
+                # 3. Borrado de comidas duplicadas
                 mask_dup = df_final.duplicated(subset=[c_nombre, c_fecha, col_turno_key], keep='first')
                 df_final.loc[mask_dup, columna_comida] = 0
                 
                 # 4. RESTAURAMOS EL ORDEN ORIGINAL 🔄
-                #    Volvemos a ordenar por la columna oculta que creamos al principio
                 df_final = df_final.sort_values(by='__orden_original__', ascending=True)
                 
-                # Borramos las columnas auxiliares
                 df_final.drop(columns=['__temp_horas__', '__orden_original__'], inplace=True)
             else:
-                # Si no hay nombre/fecha, solo borramos la columna auxiliar de orden
                 df_final.drop(columns=['__orden_original__'], inplace=True)
         else:
              df_final.drop(columns=['__orden_original__'], inplace=True)
@@ -161,18 +157,30 @@ def procesar_excel_master(file_content):
         for col in cols_fecha:
             df_final[col] = pd.to_datetime(df_final[col], errors='coerce').dt.date
 
-        # G) REPORTE DE EXCESO (> 12 HORAS) 👮‍♂️
+        # G) REPORTE DE EXCESO (Dinámico según día de la semana) 👮‍♂️
         df_excedidos = pd.DataFrame()
         if c_nombre and c_fecha:
             # Calculamos horas totales por fila para la alerta
             df_final['__total_fila__'] = df_final[indices_rmmal].sum(axis=1) + df_final[columna_comida]
             
-            # Agrupamos solo para checar (esto no afecta el orden del df_final)
+            # Agrupamos solo para checar
             reporte = df_final.groupby([c_nombre, c_fecha, col_turno_key])['__total_fila__'].sum().reset_index()
             
-            # Filtramos excesos
-            df_excedidos = reporte[reporte['__total_fila__'] > 12.0].copy()
+            # --- MODIFICACIÓN LÓGICA DE DÍAS (Sábados y Domingos) ---
+            # Convertimos temporalmente a datetime para sacar el día de la semana
+            reporte['__temp_date__'] = pd.to_datetime(reporte[c_fecha])
+            
+            # 0=Lunes ... 5=Sábado, 6=Domingo
+            # Si es mayor o igual a 5 (Sáb o Dom), límite es 6.0, si no, límite es 12.0
+            reporte['__limite_horas__'] = reporte['__temp_date__'].dt.dayofweek.apply(lambda x: 6.0 if x >= 5 else 12.0)
+            
+            # Filtramos excesos comparando contra el límite dinámico
+            df_excedidos = reporte[reporte['__total_fila__'] > reporte['__limite_horas__']].copy()
+            
+            # Limpieza para mostrar al usuario
+            df_excedidos = df_excedidos[[c_nombre, c_fecha, col_turno_key, '__total_fila__']]
             df_excedidos.columns = ['Nombre', 'Fecha', 'Turno', 'Horas Totales']
+            # -----------------------------------
             
             df_final.drop(columns=['__total_fila__'], inplace=True)
 
@@ -242,11 +250,12 @@ if archivo:
                 st.success("✅ ¡Listo! El archivo respeta el orden original.")
                 
                 if df_alertas is not None and not df_alertas.empty:
-                    st.error(f"⚠️ SE DETECTARON {len(df_alertas)} CASOS DE EXCESO DE HORAS (>12h):")
+                    st.error(f"⚠️ SE DETECTARON {len(df_alertas)} CASOS DE EXCESO DE HORAS:")
+                    st.write("Nota: Límite normal 12h | Límite Fin de Semana (Sáb/Dom) 6h")
                     st.dataframe(df_alertas, use_container_width=True)
                 else:
                     st.balloons()
-                    st.info("✅ Ningún turno excedió las 12 horas.")
+                    st.info("✅ Ningún turno excedió el límite (12h Lun-Vie / 6h Fines de Semana).")
 
                 st.download_button(
                     label="📥 Descargar Reporte Final",
@@ -254,4 +263,3 @@ if archivo:
                     file_name="Reporte_Ordenado.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
-
